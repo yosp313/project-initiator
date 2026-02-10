@@ -1,7 +1,7 @@
+// Package scaffold provides project scaffolding functionality.
 package scaffold
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -9,12 +9,215 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"text/template"
+
+	"project-initiator/internal/domain"
+	apperrors "project-initiator/internal/errors"
+	"project-initiator/internal/library"
+	"project-initiator/internal/template"
 )
 
 var nameSlug = regexp.MustCompile(`[^a-zA-Z0-9-_]+`)
 
-type Data struct {
+// Request represents a scaffolding request.
+type Request struct {
+	Language  string
+	Framework string
+	Name      string
+	Dir       string
+	DryRun    bool
+	Libraries []string
+}
+
+// Planner handles project planning.
+type Planner struct {
+	renderer *template.Renderer
+	options  []domain.Framework
+}
+
+// NewPlanner creates a new planner with the given options.
+func NewPlanner(options []domain.Framework) *Planner {
+	return &Planner{
+		renderer: template.NewRenderer(),
+		options:  options,
+	}
+}
+
+// DefaultPlanner creates a planner with the default options.
+func DefaultPlanner() *Planner {
+	return NewPlanner(Frameworks)
+}
+
+// Plan creates a scaffolding plan for the given request.
+func (p *Planner) Plan(req Request) (domain.Plan, error) {
+	framework, err := p.findFramework(req.Language, req.Framework)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+
+	project, err := p.buildProject(req, framework)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+
+	return p.generatePlan(project, framework)
+}
+
+func (p *Planner) buildProject(req Request, framework domain.Framework) (domain.Project, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return domain.Project{}, apperrors.NewValidationError("name", "project name is required")
+	}
+
+	dir := strings.TrimSpace(req.Dir)
+	if dir == "" {
+		dir = "."
+	}
+
+	slug := slugify(name)
+	languageDir := cleanLanguageDir(framework.Language)
+	projectDir := filepath.Join(filepath.Clean(dir), languageDir, slug)
+
+	return domain.Project{
+		Language:  framework.Language,
+		Framework: framework.Name,
+		Name:      name,
+		Slug:      slug,
+		Module:    slug,
+		Dir:       projectDir,
+		Libraries: req.Libraries,
+	}, nil
+}
+
+func (p *Planner) generatePlan(project domain.Project, framework domain.Framework) (domain.Plan, error) {
+	actions, err := p.generateActions(project, framework)
+	if err != nil {
+		return domain.Plan{}, apperrors.NewScaffoldError("generate actions", err)
+	}
+
+	return domain.Plan{
+		ProjectDir: project.Dir,
+		Actions:    actions,
+		Generator:  framework.Generator,
+	}, nil
+}
+
+func (p *Planner) generateActions(project domain.Project, framework domain.Framework) ([]domain.Action, error) {
+	data := p.buildTemplateData(project)
+	actions := make([]domain.Action, 0)
+
+	// Generate base template actions
+	for _, tmpl := range framework.Templates {
+		content, err := p.renderer.Render(tmpl.Content, data)
+		if err != nil {
+			return nil, fmt.Errorf("render template content: %w", err)
+		}
+
+		relPath, err := p.renderer.Render(tmpl.RelativePath, data)
+		if err != nil {
+			return nil, fmt.Errorf("render template path: %w", err)
+		}
+
+		path := filepath.Join(project.Dir, filepath.FromSlash(relPath))
+		actions = append(actions, domain.Action{Path: path, Content: content})
+	}
+
+	// Apply library-specific modifications for Go projects
+	if strings.EqualFold(project.Language, "go") {
+		actions = p.applyGoLibraries(actions, project)
+	}
+
+	return actions, nil
+}
+
+func (p *Planner) buildTemplateData(project domain.Project) TemplateData {
+	selectedLibs := make(map[string]bool)
+	for _, lib := range project.Libraries {
+		selectedLibs[strings.ToLower(strings.TrimSpace(lib))] = true
+	}
+
+	return TemplateData{
+		Name:        project.Name,
+		PackageName: project.Slug,
+		Module:      project.Module,
+		Framework:   project.Framework,
+		GoVersion:   goVersionTag(),
+		UseGin:      selectedLibs["gin"],
+		UseGorm:     selectedLibs["gorm"],
+		UseSqlc:     selectedLibs["sqlc"],
+	}
+}
+
+func (p *Planner) applyGoLibraries(actions []domain.Action, project domain.Project) []domain.Action {
+	libMgr := library.NewManager(project)
+
+	// Check if any libraries are enabled
+	if !libMgr.HasLibrary("gin") && !libMgr.HasLibrary("gorm") && !libMgr.HasLibrary("sqlc") {
+		return actions
+	}
+
+	// Remove replaced files
+	replaced := libMgr.ReplacedFiles(project.Slug)
+	filtered := make([]domain.Action, 0, len(actions))
+	for _, action := range actions {
+		relPath, err := filepath.Rel(project.Dir, action.Path)
+		if err != nil {
+			relPath = filepath.Base(action.Path)
+		}
+		relPath = filepath.ToSlash(relPath)
+		if !replaced[relPath] {
+			filtered = append(filtered, action)
+		}
+	}
+	actions = filtered
+
+	goVersion := goVersionTag()
+
+	// Add library-specific files
+	if libMgr.HasLibrary("gin") || libMgr.HasLibrary("gorm") || libMgr.HasLibrary("sqlc") {
+		// Determine main file path based on framework
+		mainPath := filepath.Join(project.Dir, "main.go")
+		if strings.EqualFold(project.Framework, "cobra") {
+			mainPath = filepath.Join(project.Dir, "cmd", project.Slug, "main.go")
+		}
+
+		actions = append(actions, domain.Action{
+			Path:    mainPath,
+			Content: libMgr.GenerateMain(project.Framework),
+		})
+		actions = append(actions, domain.Action{
+			Path:    filepath.Join(project.Dir, "go.mod"),
+			Content: libMgr.GenerateGoMod(goVersion),
+		})
+		actions = append(actions, domain.Action{
+			Path:    filepath.Join(project.Dir, "README.md"),
+			Content: libMgr.GenerateReadme(),
+		})
+	}
+
+	// Add library-specific file templates
+	for path, content := range libMgr.FileTemplates() {
+		fullPath := filepath.Join(project.Dir, filepath.FromSlash(path))
+		actions = append(actions, domain.Action{Path: fullPath, Content: content})
+	}
+
+	return actions
+}
+
+func (p *Planner) findFramework(lang, framework string) (domain.Framework, error) {
+	lang = strings.TrimSpace(lang)
+	framework = strings.TrimSpace(framework)
+
+	for _, opt := range p.options {
+		if strings.EqualFold(opt.Language, lang) && strings.EqualFold(opt.Name, framework) {
+			return opt, nil
+		}
+	}
+
+	return domain.Framework{}, fmt.Errorf("no template for %s / %s", lang, framework)
+}
+
+// TemplateData holds data for template rendering.
+type TemplateData struct {
 	Name        string
 	PackageName string
 	Module      string
@@ -25,160 +228,41 @@ type Data struct {
 	UseSqlc     bool
 }
 
-type Request struct {
-	Language  string
-	Framework string
-	Name      string
-	Dir       string
-	DryRun    bool
-	Libraries []string
+// Applier handles applying scaffold plans.
+type Applier struct{}
+
+// NewApplier creates a new applier.
+func NewApplier() *Applier {
+	return &Applier{}
 }
 
-type Action struct {
-	Path    string
-	Content string
-}
-
-type PlanResult struct {
-	ProjectDir string
-	Actions    []Action
-	Generator  string
-}
-
-func Plan(req Request) (PlanResult, error) {
-	opt, err := findOption(req.Language, req.Framework)
-	if err != nil {
-		return PlanResult{}, err
-	}
-
-	projectName := strings.TrimSpace(req.Name)
-	if projectName == "" {
-		return PlanResult{}, errors.New("project name is required")
-	}
-
-	projectSlug := slugify(projectName)
-	selected := map[string]bool{}
-	for _, lib := range req.Libraries {
-		selected[strings.ToLower(strings.TrimSpace(lib))] = true
-	}
-	data := Data{
-		Name:        projectName,
-		PackageName: projectSlug,
-		Module:      projectSlug,
-		Framework:   opt.Framework,
-		GoVersion:   goVersionTag(),
-		UseGin:      selected["gin"],
-		UseGorm:     selected["gorm"],
-		UseSqlc:     selected["sqlc"],
-	}
-
-	rootDir := strings.TrimSpace(req.Dir)
-	if rootDir == "" {
-		rootDir = "."
-	}
-	rootDir = filepath.Clean(rootDir)
-	languageDir := cleanLanguageDir(req.Language)
-	projectDir := filepath.Join(rootDir, languageDir, projectSlug)
-
-	actions := make([]Action, 0, len(opt.Templates))
-	for _, tmpl := range opt.Templates {
-		content, err := render(tmpl.Content, data)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		relPath, err := render(tmpl.RelativePath, data)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		path := filepath.Join(projectDir, filepath.FromSlash(relPath))
-		actions = append(actions, Action{Path: path, Content: content})
-	}
-
-	if strings.EqualFold(opt.Language, "go") {
-		if data.UseGin || data.UseGorm || data.UseSqlc {
-			mainPath := filepath.Join(projectDir, "main.go")
-			if strings.EqualFold(opt.Framework, "cobra") {
-				mainPath = filepath.Join(projectDir, "cmd", projectSlug, "main.go")
-			}
-			// Remove base template files that will be replaced by library-specific versions
-			replace := map[string]bool{
-				mainPath:                               true,
-				filepath.Join(projectDir, "go.mod"):    true,
-				filepath.Join(projectDir, "README.md"): true,
-			}
-			filtered := make([]Action, 0, len(actions))
-			for _, a := range actions {
-				if !replace[a.Path] {
-					filtered = append(filtered, a)
-				}
-			}
-			actions = filtered
-
-			actions = append(actions, Action{Path: mainPath, Content: goLibrariesMain(data, opt.Framework)})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "go.mod"), Content: goLibrariesMod(data)})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "README.md"), Content: goLibrariesReadme(data)})
-		}
-		if data.UseGin {
-			routesContent, err := render(goGinRoutes, data)
-			if err != nil {
-				return PlanResult{}, err
-			}
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/http/server.go"), Content: goGinServer})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/http/routes.go"), Content: routesContent})
-		}
-		if data.UseGorm {
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/db/db.go"), Content: goGormDB})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/db/models.go"), Content: goGormModels})
-		}
-		if data.UseSqlc {
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "sqlc.yaml"), Content: goSqlcConfig})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "db/schema.sql"), Content: goSqlcSchema})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "db/query.sql"), Content: goSqlcQuery})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/db/README.md"), Content: goSqlcReadme})
-		}
-	}
-
-	return PlanResult{ProjectDir: projectDir, Actions: actions, Generator: opt.Generator}, nil
-}
-
-func Apply(actions []Action, dryRun bool) error {
-	for _, action := range actions {
+// Apply executes the plan by writing files to disk.
+func (a *Applier) Apply(plan domain.Plan, dryRun bool) error {
+	// Check for existing files first
+	for _, action := range plan.Actions {
 		if _, err := os.Stat(action.Path); err == nil {
-			return fmt.Errorf("file already exists: %s", action.Path)
+			return fmt.Errorf("%w: %s", apperrors.ErrProjectExists, action.Path)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			return fmt.Errorf("check file existence: %w", err)
 		}
 	}
 
-	for _, action := range actions {
+	// Apply actions
+	for _, action := range plan.Actions {
 		if dryRun {
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(action.Path), 0o755); err != nil {
-			return err
+			return fmt.Errorf("create directory: %w", err)
 		}
 
 		if err := os.WriteFile(action.Path, []byte(action.Content), 0o644); err != nil {
-			return err
+			return fmt.Errorf("write file: %w", err)
 		}
 	}
 
 	return nil
-}
-
-func render(source string, data Data) (string, error) {
-	tmpl, err := template.New("template").Parse(source)
-	if err != nil {
-		return "", err
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", err
-	}
-
-	return buf.String(), nil
 }
 
 func slugify(value string) string {
@@ -190,21 +274,7 @@ func slugify(value string) string {
 	if value == "" {
 		return "project"
 	}
-
 	return value
-}
-
-func findOption(lang string, framework string) (Option, error) {
-	lang = strings.TrimSpace(lang)
-	framework = strings.TrimSpace(framework)
-
-	for _, opt := range Options {
-		if strings.EqualFold(opt.Language, lang) && strings.EqualFold(opt.Framework, framework) {
-			return opt, nil
-		}
-	}
-
-	return Option{}, fmt.Errorf("no template for %s / %s", lang, framework)
 }
 
 func cleanLanguageDir(language string) string {
@@ -227,115 +297,15 @@ func cleanLanguageDir(language string) string {
 	if value == "" {
 		return "language"
 	}
-
 	return value
 }
 
-const goGinServer = "package http\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/gin-gonic/gin\"\n)\n\nfunc NewServer() *gin.Engine {\n\trouter := gin.New()\n\trouter.Use(gin.Recovery())\n\n\tRegisterRoutes(router)\n\n\trouter.GET(\"/health\", func(c *gin.Context) {\n\t\tc.JSON(http.StatusOK, gin.H{\"status\": \"ok\"})\n\t})\n\n\treturn router\n}\n"
-
-const goGinRoutes = "package http\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/gin-gonic/gin\"\n)\n\nfunc RegisterRoutes(router *gin.Engine) {\n\trouter.GET(\"/\", func(c *gin.Context) {\n\t\tc.JSON(http.StatusOK, gin.H{\"message\": \"hello from {{.Name}}\"})\n\t})\n}\n"
-
-const goGormDB = "package db\n\nimport (\n\t\"gorm.io/driver/sqlite\"\n\t\"gorm.io/gorm\"\n)\n\nfunc Open() (*gorm.DB, error) {\n\treturn gorm.Open(sqlite.Open(\"app.db\"), &gorm.Config{})\n}\n"
-
-const goGormModels = "package db\n\nimport \"gorm.io/gorm\"\n\ntype User struct {\n\tID   uint\n\tName string\n}\n\nfunc AutoMigrate(db *gorm.DB) error {\n\treturn db.AutoMigrate(&User{})\n}\n"
-
-const goSqlcConfig = "version: \"2\"\nsql:\n  - engine: \"sqlite\"\n    schema: \"db/schema.sql\"\n    queries: \"db/query.sql\"\n    gen:\n      go:\n        package: \"db\"\n        out: \"internal/db\"\n"
-
-const goSqlcSchema = "CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\n"
-
-const goSqlcQuery = "-- name: ListUsers :many\nSELECT id, name FROM users;\n\n-- name: CreateUser :exec\nINSERT INTO users (name) VALUES (?);\n"
-
-const goSqlcReadme = "# SQLC\n\nRun `sqlc generate` to generate Go code into internal/db.\n"
-
-func goLibrariesReadme(data Data) string {
-	lines := []string{
-		"# " + data.Name,
-		"",
-		"Generated by project-initiator.",
-		"",
-		"Included libraries:",
-	}
-	if data.UseGin {
-		lines = append(lines, "- Gin")
-	}
-	if data.UseGorm {
-		lines = append(lines, "- Gorm")
-	}
-	if data.UseSqlc {
-		lines = append(lines, "- Sqlc")
-		lines = append(lines, "", "Run: `sqlc generate`")
-	}
-	lines = append(lines, "")
-	return strings.Join(lines, "\n")
-}
-
-func goLibrariesMod(data Data) string {
-	lines := []string{"module " + data.Module, "", "go " + data.GoVersion, "", "require ("}
-	if data.UseGin {
-		lines = append(lines, "\tgithub.com/gin-gonic/gin v1.10.0")
-	}
-	if data.UseGorm {
-		lines = append(lines, "\tgorm.io/driver/sqlite v1.5.7")
-		lines = append(lines, "\tgorm.io/gorm v1.25.12")
-	}
-	lines = append(lines, ")")
-	return strings.Join(lines, "\n") + "\n"
-}
-
-func goLibrariesMain(data Data, framework string) string {
-	usesGin := data.UseGin
-	usesGorm := data.UseGorm
-	usesSqlc := data.UseSqlc
-
-	imports := []string{"\"fmt\""}
-	if usesGin {
-		imports = append(imports, "\""+data.Module+"/internal/http\"")
-	}
-	if usesGorm {
-		imports = append(imports, "\""+data.Module+"/internal/db\"")
-	}
-
-	body := []string{}
-	body = append(body, "func run() error {")
-	body = append(body, "\tfmt.Println(\"starting\")")
-	if usesGorm {
-		body = append(body, "\tdbConn, err := db.Open()")
-		body = append(body, "\tif err != nil {\n\t\treturn err\n\t}")
-		body = append(body, "\tif err := db.AutoMigrate(dbConn); err != nil {\n\t\treturn err\n\t}")
-	}
-	if usesSqlc {
-		body = append(body, "\t// Run: sqlc generate")
-	}
-	if usesGin {
-		body = append(body, "\tserver := http.NewServer()")
-		if usesGorm {
-			body = append(body, "\t_ = dbConn")
-		}
-		body = append(body, "\treturn server.Run(\":3000\")")
-	} else {
-		body = append(body, "\treturn nil")
-	}
-	body = append(body, "}")
-
-	mainBody := []string{"func main() {", "\tif err := run(); err != nil {", "\t\tfmt.Println(\"error:\", err)", "\t}", "}"}
-
-	code := []string{"package main", "", "import ("}
-	for _, imp := range imports {
-		code = append(code, "\t"+imp)
-	}
-	code = append(code, ")", "", strings.Join(body, "\n"), "", strings.Join(mainBody, "\n"), "")
-
-	return strings.Join(code, "\n")
-}
-
-// goVersionTag returns the Go version suitable for a go.mod directive (e.g. "1.23").
-// It parses runtime.Version() which returns strings like "go1.23.4" or "devel ...".
 func goVersionTag() string {
-	v := runtime.Version() // e.g. "go1.23.4"
+	v := runtime.Version()
 	v = strings.TrimPrefix(v, "go")
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) >= 2 {
 		return parts[0] + "." + parts[1]
 	}
-	return "1.22" // fallback
+	return "1.22"
 }

@@ -1,27 +1,13 @@
 package scaffold
 
-type Template struct {
-	RelativePath string
-	Content      string
-}
+import "project-initiator/internal/domain"
 
-type Option struct {
-	Language  string
-	Framework string
-	Templates []Template
-	Generator string
-	Libraries []LibraryOption
-}
-
-type LibraryOption struct {
-	Name string
-}
-
-var Options = []Option{
+// Frameworks contains all available framework options.
+var Frameworks = []domain.Framework{
 	{
-		Language:  "JavaScript",
-		Framework: "Vanilla",
-		Templates: []Template{
+		Language: "JavaScript",
+		Name:     "Vanilla",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node src/index.js\"\n  }\n}\n",
@@ -37,14 +23,14 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Go",
-		Framework: "Vanilla",
-		Libraries: []LibraryOption{
+		Language: "Go",
+		Name:     "Vanilla",
+		Libraries: []domain.Library{
 			{Name: "Gin"},
 			{Name: "Gorm"},
 			{Name: "Sqlc"},
 		},
-		Templates: []Template{
+		Templates: []domain.Template{
 			{
 				RelativePath: "main.go",
 				Content:      "package main\n\nimport (\n\t\"fmt\"\n\n\t\"{{.Module}}/internal/app\"\n)\n\nfunc main() {\n\tif err := app.Run(); err != nil {\n\t\tfmt.Println(\"error:\", err)\n\t}\n}\n",
@@ -64,14 +50,14 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Go",
-		Framework: "Cobra",
-		Libraries: []LibraryOption{
+		Language: "Go",
+		Name:     "Cobra",
+		Libraries: []domain.Library{
 			{Name: "Gin"},
 			{Name: "Gorm"},
 			{Name: "Sqlc"},
 		},
-		Templates: []Template{
+		Templates: []domain.Template{
 			{
 				RelativePath: "go.mod",
 				Content:      "module {{.Module}}\n\ngo {{.GoVersion}}\n",
@@ -91,9 +77,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Node.js",
-		Framework: "Express",
-		Templates: []Template{
+		Language: "Node.js",
+		Name:     "Express",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node src/index.js\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.19.2\"\n  }\n}\n",
@@ -109,9 +95,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Node.js",
-		Framework: "Hono",
-		Templates: []Template{
+		Language: "Node.js",
+		Name:     "Hono",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node src/index.js\"\n  },\n  \"dependencies\": {\n    \"hono\": \"^4.6.3\",\n    \"@hono/node-server\": \"^1.12.2\"\n  }\n}\n",
@@ -127,9 +113,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Node.js",
-		Framework: "NestJS",
-		Templates: []Template{
+		Language: "Node.js",
+		Name:     "NestJS",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node --loader ts-node/esm src/main.ts\"\n  },\n  \"dependencies\": {\n    \"@nestjs/common\": \"^11.0.0\",\n    \"@nestjs/core\": \"^11.0.0\",\n    \"@nestjs/platform-express\": \"^11.0.0\",\n    \"reflect-metadata\": \"^0.2.2\",\n    \"rxjs\": \"^7.8.1\"\n  },\n  \"devDependencies\": {\n    \"ts-node\": \"^10.9.2\",\n    \"typescript\": \"^5.6.3\"\n  }\n}\n",
@@ -153,9 +139,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Bun",
-		Framework: "Vanilla",
-		Templates: []Template{
+		Language: "Bun",
+		Name:     "Vanilla",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"bun run src/index.ts\"\n  }\n}\n",
@@ -171,9 +157,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Bun",
-		Framework: "Bun",
-		Templates: []Template{
+		Language: "Bun",
+		Name:     "Bun",
+		Templates: []domain.Template{
 			{
 				RelativePath: "package.json",
 				Content:      "{\n  \"name\": \"{{.PackageName}}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"bun run src/index.ts\"\n  }\n}\n",
@@ -189,9 +175,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Python",
-		Framework: "Vanilla",
-		Templates: []Template{
+		Language: "Python",
+		Name:     "Vanilla",
+		Templates: []domain.Template{
 			{
 				RelativePath: "app/main.py",
 				Content:      "def main():\n    print(\"hello from {{.Name}}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
@@ -203,9 +189,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "Python",
-		Framework: "FastAPI",
-		Templates: []Template{
+		Language: "Python",
+		Name:     "FastAPI",
+		Templates: []domain.Template{
 			{
 				RelativePath: "requirements.txt",
 				Content:      "fastapi==0.115.5\nuvicorn==0.32.0\n",
@@ -221,9 +207,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:  "PHP",
-		Framework: "Vanilla",
-		Templates: []Template{
+		Language: "PHP",
+		Name:     "Vanilla",
+		Templates: []domain.Template{
 			{
 				RelativePath: "src/index.php",
 				Content:      "<?php\n\necho \"hello from {{.Name}}\";\n",
@@ -236,8 +222,7 @@ var Options = []Option{
 	},
 	{
 		Language:  "PHP",
-		Framework: "Laravel",
+		Name:      "Laravel",
 		Generator: "composer-laravel",
-		Templates: nil,
 	},
 }

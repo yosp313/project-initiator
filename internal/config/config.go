@@ -16,10 +16,14 @@ type Config struct {
 }
 
 func Default() Config {
+	dir := "."
+	if home, err := os.UserHomeDir(); err == nil {
+		dir = filepath.Join(home, "Projects")
+	}
 	return Config{
 		DefaultLanguage:  "Go",
 		DefaultFramework: "Cobra",
-		DefaultDir:       "/mnt/Dev/Projects",
+		DefaultDir:       dir,
 	}
 }
 

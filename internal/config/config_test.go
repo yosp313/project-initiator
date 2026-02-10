@@ -16,8 +16,15 @@ func TestDefault(t *testing.T) {
 	if cfg.DefaultFramework != "Cobra" {
 		t.Errorf("DefaultFramework = %q, want %q", cfg.DefaultFramework, "Cobra")
 	}
-	if cfg.DefaultDir != "/mnt/Dev/Projects" {
-		t.Errorf("DefaultDir = %q, want %q", cfg.DefaultDir, "/mnt/Dev/Projects")
+
+	// DefaultDir should be based on the user's home directory, not hardcoded.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("cannot determine home dir: %v", err)
+	}
+	wantDir := filepath.Join(home, "Projects")
+	if cfg.DefaultDir != wantDir {
+		t.Errorf("DefaultDir = %q, want %q", cfg.DefaultDir, wantDir)
 	}
 }
 

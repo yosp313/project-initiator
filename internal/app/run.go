@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"project-initiator/internal/config"
+	"project-initiator/internal/domain"
 	"project-initiator/internal/flags"
 	"project-initiator/internal/scaffold"
 	"project-initiator/internal/ui"
@@ -35,7 +36,7 @@ func Run(args []string) int {
 		return 2
 	}
 
-	plan, err := scaffold.Plan(request)
+	plan, err := scaffold.DefaultPlanner().Plan(request)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -51,7 +52,7 @@ func Run(args []string) int {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-	} else if err := scaffold.Apply(plan.Actions, opts.DryRun); err != nil {
+	} else if err := scaffold.NewApplier().Apply(plan, false); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -148,7 +149,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func printPlan(plan scaffold.PlanResult) {
+func printPlan(plan domain.Plan) {
 	_, _ = fmt.Fprintln(os.Stdout, "Plan:")
 	_, _ = fmt.Fprintln(os.Stdout, "Project:", plan.ProjectDir)
 	if plan.Generator != "" {
@@ -159,7 +160,7 @@ func printPlan(plan scaffold.PlanResult) {
 	}
 }
 
-func printSuccess(request scaffold.Request, plan scaffold.PlanResult, gitOk bool) {
+func printSuccess(request scaffold.Request, plan domain.Plan, gitOk bool) {
 	accent := lipgloss.Color("#7aa2f7")
 	muted := lipgloss.Color("#6b7280")
 	text := lipgloss.Color("#c0caf5")
