@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // newCleanList creates a list.Model with all chrome (title, filter, help,
@@ -287,13 +288,14 @@ func (m model) renderFrame(content string, step string) string {
 	stageSubtitleLine := m.styles.subheader.Render(stageSubtitle(m.stage))
 	contentBlock := m.renderContentBlock(content, contentWidth)
 
-	// Stage transition — apply horizontal offset by padding/clipping content.
+	// Stage transition — shift the content area horizontally.
+	// Uses ANSI-aware operations so styled escape sequences are preserved.
 	if m.transActive {
 		offset := int(m.transOffset)
 		if offset != 0 {
-			stageTitleLine = applyHorizontalOffset(stageTitleLine, offset, contentWidth)
-			stageSubtitleLine = applyHorizontalOffset(stageSubtitleLine, offset, contentWidth)
-			contentBlock = applyHorizontalOffset(contentBlock, offset, contentWidth)
+			stageTitleLine = shiftHorizontal(stageTitleLine, offset, contentWidth)
+			stageSubtitleLine = shiftHorizontal(stageSubtitleLine, offset, contentWidth)
+			contentBlock = shiftHorizontal(contentBlock, offset, contentWidth)
 		}
 	}
 
@@ -311,43 +313,41 @@ func (m model) renderFrame(content string, step string) string {
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
-	body = lipgloss.NewStyle().Width(contentWidth).Height(innerHeight).Background(rowBg).Render(body)
+	body = lipgloss.NewStyle().
+		Width(contentWidth).
+		Height(innerHeight).
+		MaxHeight(innerHeight).
+		MaxWidth(contentWidth).
+		Background(rowBg).
+		Render(body)
 	panel := m.styles.panel.Width(pw).Height(ph).Render(body)
 	return m.styles.frame.Width(m.width).Height(m.height).Align(lipgloss.Center, lipgloss.Center).Render(panel)
 }
 
-// applyHorizontalOffset shifts rendered text by the given column offset.
+// shiftHorizontal shifts ANSI-styled text by offset columns within maxWidth.
 // Positive offset shifts right (content slides in from right); negative shifts left.
-func applyHorizontalOffset(text string, offset int, maxWidth int) string {
+// Uses ANSI-aware operations to preserve escape sequences.
+func shiftHorizontal(text string, offset int, maxWidth int) string {
 	if offset == 0 || maxWidth <= 0 {
 		return text
 	}
 	lines := strings.Split(text, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
-		runes := []rune(line)
 		if offset > 0 {
-			// Shift right: prepend spaces, truncate to width.
-			pad := strings.Repeat(" ", offset)
-			shifted := pad + string(runes)
-			sr := []rune(shifted)
-			if len(sr) > maxWidth {
-				sr = sr[:maxWidth]
-			}
-			result = append(result, string(sr))
+			// Shift right: prepend spaces, then clip to maxWidth.
+			spacer := strings.Repeat(" ", offset)
+			shifted := lipgloss.JoinHorizontal(lipgloss.Top, spacer, line)
+			result = append(result, lipgloss.NewStyle().MaxWidth(maxWidth).Render(shifted))
 		} else {
-			// Shift left: drop leading chars, pad end.
+			// Shift left: drop leading visible characters, pad right to maxWidth.
 			drop := -offset
-			if drop >= len(runes) {
-				result = append(result, strings.Repeat(" ", maxWidth))
-			} else {
-				shifted := string(runes[drop:])
-				sr := []rune(shifted)
-				if len(sr) < maxWidth {
-					shifted += strings.Repeat(" ", maxWidth-len(sr))
-				}
-				result = append(result, shifted)
+			truncated := ansi.TruncateLeft(line, drop, "")
+			visW := ansi.StringWidth(truncated)
+			if visW < maxWidth {
+				truncated += strings.Repeat(" ", maxWidth-visW)
 			}
+			result = append(result, truncated)
 		}
 	}
 	return strings.Join(result, "\n")
@@ -356,7 +356,13 @@ func applyHorizontalOffset(text string, offset int, maxWidth int) string {
 func (m model) renderContentBlock(content string, width int) string {
 	rowBg := m.styles.panelBg
 	height := m.listHeightFixed()
-	return lipgloss.NewStyle().Width(width).Height(height).Background(rowBg).Render(content)
+	return lipgloss.NewStyle().
+		Width(width).
+		Height(height).
+		MaxHeight(height).
+		MaxWidth(width).
+		Background(rowBg).
+		Render(content)
 }
 
 func (m model) renderNameInput() string {

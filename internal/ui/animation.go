@@ -150,9 +150,27 @@ func renderAnimatedBorder(width int, frame int, cache animCache) string {
 	return b.String()
 }
 
+// titleBlockHeight is the fixed number of lines the title block occupies:
+// top border (1) + 9 art lines + bottom border (1) = 11.
+const titleBlockHeight = 11
+
 // renderAnimatedTitle composes the full animated title block:
 // border line, ASCII art with typing reveal, border line.
+//
+// When width is smaller than the art (e.g. during panel entrance animation),
+// the art is horizontally clipped to fit and each line is capped at width.
 func (m model) renderAnimatedTitle(width int) string {
+	if width < 4 {
+		// Panel too small for any meaningful title — return empty lines
+		// so the title block still occupies the expected height.
+		blank := m.animCache.bg.Render(strings.Repeat(" ", width))
+		lines := make([]string, titleBlockHeight)
+		for i := range lines {
+			lines[i] = blank
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	}
+
 	art := asciiArt()
 	aw := artWidth()
 	frame := m.titleFrame
@@ -163,6 +181,18 @@ func (m model) renderAnimatedTitle(width int) string {
 
 	cache := m.animCache
 
+	// If the content area is narrower than the art, we clip symmetrically.
+	// clipL/clipR are the number of rune columns to drop from each side.
+	clipL := 0
+	clipR := 0
+	visibleAW := aw
+	if width < aw {
+		excess := aw - width
+		clipL = excess / 2
+		clipR = excess - clipL
+		visibleAW = width
+	}
+
 	var lines []string
 
 	// Top border
@@ -171,9 +201,8 @@ func (m model) renderAnimatedTitle(width int) string {
 	// Render each art line with typing reveal
 	for lineIdx, artLine := range art {
 		runes := []rune(artLine)
-		artRuneLen := len(runes)
 
-		// Pad to artWidth
+		// Pad to artWidth so indexing is safe
 		for len(runes) < aw {
 			runes = append(runes, ' ')
 		}
@@ -183,8 +212,8 @@ func (m model) renderAnimatedTitle(width int) string {
 
 		var lineBuilder strings.Builder
 
-		// Center padding
-		leftPad := (width - aw) / 2
+		// Center padding (only when width > visibleAW)
+		leftPad := (width - visibleAW) / 2
 		if leftPad < 0 {
 			leftPad = 0
 		}
@@ -194,29 +223,25 @@ func (m model) renderAnimatedTitle(width int) string {
 
 		if artLine == "" {
 			// Blank separator line
-			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", aw)))
+			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", visibleAW)))
 		} else {
-			for col := 0; col < artRuneLen; col++ {
+			// Render only the visible portion: columns [clipL, aw-clipR)
+			startCol := clipL
+			endCol := aw - clipR
+			for col := startCol; col < endCol; col++ {
 				ch := string(runes[col])
 				if col >= revealedCols {
-					// Not yet revealed — render as space
 					lineBuilder.WriteString(cache.bg.Render(" "))
 				} else if col >= revealedCols-revealColumns && frame < revealTotalTicks() {
-					// Flash edge — just revealed this tick
 					lineBuilder.WriteString(cache.flash.Render(ch))
 				} else {
 					lineBuilder.WriteString(normalStyle.Render(ch))
 				}
 			}
-			// Pad remaining after art chars
-			remaining := aw - artRuneLen
-			if remaining > 0 {
-				lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", remaining)))
-			}
 		}
 
 		// Right padding
-		rightPad := width - leftPad - aw
+		rightPad := width - leftPad - visibleAW
 		if rightPad > 0 {
 			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", rightPad)))
 		}

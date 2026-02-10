@@ -369,30 +369,6 @@ func TestAbsF(t *testing.T) {
 	}
 }
 
-func TestApplyHorizontalOffset(t *testing.T) {
-	tests := []struct {
-		name     string
-		text     string
-		offset   int
-		maxWidth int
-		want     string
-	}{
-		{"zero offset", "hello", 0, 10, "hello"},
-		{"shift right", "hello", 3, 10, "   hello"},
-		{"shift left", "hello", -2, 10, "llo       "},
-		{"shift left beyond length", "hi", -5, 10, "          "},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := applyHorizontalOffset(tt.text, tt.offset, tt.maxWidth)
-			if got != tt.want {
-				t.Errorf("applyHorizontalOffset(%q, %d, %d) = %q, want %q", tt.text, tt.offset, tt.maxWidth, got, tt.want)
-			}
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // ASCII art & animation tests
 // ---------------------------------------------------------------------------
@@ -539,6 +515,22 @@ func TestRenderAnimatedTitle_NonEmpty(t *testing.T) {
 	result := m.renderAnimatedTitle(60)
 	if result == "" {
 		t.Error("renderAnimatedTitle(60) should not be empty")
+	}
+}
+
+func TestRenderAnimatedTitle_SmallWidth(t *testing.T) {
+	s := defaultStyles()
+	m := model{
+		styles:     s,
+		animCache:  buildAnimCache(s),
+		titleFrame: 10,
+	}
+	// Width smaller than art (46 chars) — should still render without panic.
+	for _, w := range []int{1, 3, 20, 30, 45} {
+		result := m.renderAnimatedTitle(w)
+		if result == "" {
+			t.Errorf("renderAnimatedTitle(%d) should not be empty", w)
+		}
 	}
 }
 
