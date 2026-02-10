@@ -71,7 +71,7 @@ Types and structures
 
 Error handling
 - Return errors early; avoid deep nesting.
-- Use `fmt.Errorf` to add context; do not swallow errors.
+- Use `errors.New()` for static error strings; use `fmt.Errorf` only when adding dynamic context.
 - For user-facing errors, print to `os.Stderr` and exit with non-zero status.
 - Check for specific error types when possible.
 - Validate inputs at function boundaries.
@@ -91,8 +91,15 @@ CLI behavior
 TUI conventions (Bubble Tea)
 - Use `list` for selectable menus.
 - Use `textinput` for user text entry.
+- Use `help` component for the status bar with context-sensitive key binding hints.
+- Use `progress` component for the step progress indicator.
+- Use `key.Binding` with `key.Matches` for all key handling; avoid raw `msg.String()`.
+- Use `lipgloss.AdaptiveColor` for all colors to support light and dark terminals.
+- Use `harmonica.Spring` for panel entrance and stage transition animations.
+- Use `tea.WithAltScreen()` when creating the program.
+- Use `tea.Tick` for animation timing; avoid the `spinner` component for custom animations.
+- Pre-compute animation styles in `animCache` to avoid per-frame allocations.
 - Do not bind destructive actions to Backspace in the name input step.
-- Use `lipgloss` for styling with consistent color scheme.
 - Keep animations smooth with frame-based rendering.
 
 Scaffolding conventions
@@ -117,7 +124,7 @@ Adding new templates
 Go module considerations
 - Module name: `project-initiator` (see `go.mod`).
 - Go version: `1.25.4`.
-- Dependencies: `bubbletea`, `bubbles`, `lipgloss` (charmbracelet stack).
+- Dependencies: `bubbletea`, `bubbles`, `lipgloss`, `harmonica` (charmbracelet stack).
 
 Platform assumptions
 - Default project directory uses `~/Projects` (computed via `os.UserHomeDir()`).

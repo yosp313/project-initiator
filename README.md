@@ -4,12 +4,13 @@ A terminal-based project scaffolding tool built with Go. Select a language, fram
 
 ## Features
 
-- **Interactive TUI** powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea) with animated ASCII art title and border reveal
+- **Interactive TUI** powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea) with animated ASCII art title, spring-animated panel entrance, and smooth stage transitions
 - **6 languages, 12 framework templates** covering Go, JavaScript, Node.js, Bun, Python, and PHP
 - **Go library add-ons** &mdash; optionally layer in Gin, Gorm, and/or Sqlc on any Go template
 - **Non-interactive mode** for CI/scripting via `--no-tui` and CLI flags
 - **Dry-run mode** to preview the plan without writing files
 - **Persistent config** remembers your last language, framework, and output directory
+- **Adaptive colors** &mdash; light and dark terminal themes supported via `lipgloss.AdaptiveColor`
 
 ## Supported Languages & Frameworks
 
@@ -143,10 +144,10 @@ project-initiator/
     │   └── scaffold_test.go
     ├── template/renderer.go     # Go text/template wrapper
     └── ui/
-        ├── animation.go         # ASCII art title and animated border/reveal
-        ├── helpers.go           # List builders, rendering helpers, utility functions
-        ├── styles.go            # Lipgloss styles, list delegate, color palette
-        ├── wizard.go            # Bubble Tea model: Init, Update, View, stage handlers
+        ├── animation.go         # ASCII art title, animated border with gradient glow spark
+        ├── helpers.go           # List builders, stage progress, rendering helpers, transitions
+        ├── styles.go            # Lipgloss styles, list delegate, adaptive color palette
+        ├── wizard.go            # Bubble Tea model: Init, Update, View, stage handlers, springs
         └── wizard_test.go
 ```
 
@@ -207,8 +208,9 @@ go vet ./...
 ## Dependencies
 
 - [charmbracelet/bubbletea](https://github.com/charmbracelet/bubbletea) &mdash; Terminal UI framework
-- [charmbracelet/bubbles](https://github.com/charmbracelet/bubbles) &mdash; TUI components (list, text input)
+- [charmbracelet/bubbles](https://github.com/charmbracelet/bubbles) &mdash; TUI components (list, text input, help, progress, key bindings)
 - [charmbracelet/lipgloss](https://github.com/charmbracelet/lipgloss) &mdash; Terminal styling and layout
+- [charmbracelet/harmonica](https://github.com/charmbracelet/harmonica) &mdash; Spring-based animation physics
 
 ## License
 
