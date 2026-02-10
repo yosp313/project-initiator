@@ -47,7 +47,7 @@ func buildFrameworkList(language string, options map[string][]string, defaultFra
 	return model
 }
 
-func buildLibrariesList(language string, framework string, options map[string][]string, selected map[string]bool, s styles) list.Model {
+func buildLibraryItems(language string, framework string, options map[string][]string, selected map[string]bool) []list.Item {
 	key := language + "::" + framework
 	libraries := uniqueStrings(options[key])
 	sortStrings(libraries)
@@ -59,7 +59,11 @@ func buildLibrariesList(language string, framework string, options map[string][]
 		}
 		items = append(items, listItem{label: label, description: "optional package"})
 	}
+	return items
+}
 
+func buildLibrariesList(language string, framework string, options map[string][]string, selected map[string]bool, s styles) list.Model {
+	items := buildLibraryItems(language, framework, options, selected)
 	return newCleanList(items, listDelegate{styles: s}, 0, 0)
 }
 
@@ -190,11 +194,29 @@ func stageSubtitle(s stage) string {
 	}
 }
 
-func backHint(s stage) string {
-	if s == stageName || s == stageLanguage {
-		return ""
+func (m model) stageProgress() float64 {
+	hasLibs := len(m.libraries.Items()) > 0
+	totalSteps := 3
+	if hasLibs {
+		totalSteps = 4
 	}
-	return "  •  B to go back"
+	switch m.stage {
+	case stageLanguage:
+		return 0.0
+	case stageFramework:
+		return 1.0 / float64(totalSteps)
+	case stageLibraries:
+		return 2.0 / float64(totalSteps)
+	case stageName:
+		if hasLibs {
+			return 3.0 / float64(totalSteps)
+		}
+		return 2.0 / float64(totalSteps)
+	case stageConfirm:
+		return 1.0
+	default:
+		return 0.0
+	}
 }
 
 func (m model) stepLabel() string {
@@ -235,14 +257,47 @@ func (m model) renderFrame(content string, step string) string {
 	if m.panelH == 0 {
 		m.panelH = 32
 	}
-	contentWidth := m.panelW - 6
+
+	// Panel entrance animation — scale dimensions during spring approach.
+	pw := m.panelW
+	ph := m.panelH
+	if !m.panelReady {
+		pw = int(float64(m.panelW) * m.panelScale)
+		ph = int(float64(m.panelH) * m.panelScale)
+		if pw < 1 {
+			pw = 1
+		}
+		if ph < 1 {
+			ph = 1
+		}
+	}
+
+	contentWidth := pw - 6
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	titleBlock := m.renderAnimatedTitle(contentWidth)
-	status := m.styles.status.Render(step + "  •  Enter to continue" + backHint(m.stage) + "  •  Esc to cancel")
+
+	// Status bar: step label + progress bar + help bindings.
+	prog := m.progress.ViewAs(m.stageProgress())
+	helpView := m.help.ShortHelpView(keys.ShortHelp())
+	status := m.styles.status.Render(step + "  " + prog + "  •  " + helpView)
+
 	stageTitleLine := m.styles.listTitle.Render(stageTitle(m.stage))
 	stageSubtitleLine := m.styles.subheader.Render(stageSubtitle(m.stage))
 	contentBlock := m.renderContentBlock(content, contentWidth)
 
-	rowBg := panelBackground(m.styles)
+	// Stage transition — apply horizontal offset by padding/clipping content.
+	if m.transActive {
+		offset := int(m.transOffset)
+		if offset != 0 {
+			stageTitleLine = applyHorizontalOffset(stageTitleLine, offset, contentWidth)
+			stageSubtitleLine = applyHorizontalOffset(stageSubtitleLine, offset, contentWidth)
+			contentBlock = applyHorizontalOffset(contentBlock, offset, contentWidth)
+		}
+	}
+
+	rowBg := m.styles.panelBg
 	rowStyle := lipgloss.NewStyle().Width(contentWidth).Background(rowBg)
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -252,32 +307,78 @@ func (m model) renderFrame(content string, step string) string {
 		rowStyle.Render(contentBlock),
 		rowStyle.Render(status),
 	)
-	innerHeight := m.panelH - 4
+	innerHeight := ph - 4
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
 	body = lipgloss.NewStyle().Width(contentWidth).Height(innerHeight).Background(rowBg).Render(body)
-	panel := m.styles.panel.Width(m.panelW).Height(m.panelH).Render(body)
+	panel := m.styles.panel.Width(pw).Height(ph).Render(body)
 	return m.styles.frame.Width(m.width).Height(m.height).Align(lipgloss.Center, lipgloss.Center).Render(panel)
 }
 
+// applyHorizontalOffset shifts rendered text by the given column offset.
+// Positive offset shifts right (content slides in from right); negative shifts left.
+func applyHorizontalOffset(text string, offset int, maxWidth int) string {
+	if offset == 0 || maxWidth <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	var result []string
+	for _, line := range lines {
+		runes := []rune(line)
+		if offset > 0 {
+			// Shift right: prepend spaces, truncate to width.
+			pad := strings.Repeat(" ", offset)
+			shifted := pad + string(runes)
+			sr := []rune(shifted)
+			if len(sr) > maxWidth {
+				sr = sr[:maxWidth]
+			}
+			result = append(result, string(sr))
+		} else {
+			// Shift left: drop leading chars, pad end.
+			drop := -offset
+			if drop >= len(runes) {
+				result = append(result, strings.Repeat(" ", maxWidth))
+			} else {
+				shifted := string(runes[drop:])
+				sr := []rune(shifted)
+				if len(sr) < maxWidth {
+					shifted += strings.Repeat(" ", maxWidth-len(sr))
+				}
+				result = append(result, shifted)
+			}
+		}
+	}
+	return strings.Join(result, "\n")
+}
+
 func (m model) renderContentBlock(content string, width int) string {
-	rowBg := panelBackground(m.styles)
+	rowBg := m.styles.panelBg
 	height := m.listHeightFixed()
 	return lipgloss.NewStyle().Width(width).Height(height).Background(rowBg).Render(content)
 }
 
 func (m model) renderNameInput() string {
-	rowBg := panelBackground(m.styles)
+	rowBg := m.styles.panelBg
 	blankLine := lipgloss.NewStyle().Background(rowBg).Render(" ")
 	label := m.styles.inputLabel.Render("Project name")
 	box := m.styles.inputFocused.Render(m.name.View())
 	help := m.styles.help.Render("Tip: Use a short, kebab-case name")
+
+	if m.nameErr != "" {
+		errStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#f52a65", Dark: "#f7768e"}).
+			Background(rowBg)
+		errLine := errStyle.Render("  " + m.nameErr)
+		return lipgloss.JoinVertical(lipgloss.Left, label, blankLine, box, errLine, blankLine, help)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, label, blankLine, box, blankLine, help)
 }
 
 func (m model) renderConfirmation() string {
-	rowBg := panelBackground(m.styles)
+	rowBg := m.styles.panelBg
 	blankLine := lipgloss.NewStyle().Background(rowBg).Render(" ")
 
 	labelStyle := m.styles.inputLabel

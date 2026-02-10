@@ -56,18 +56,70 @@ func revealTotalTicks() int {
 	return ticks
 }
 
+// animCache holds pre-computed styles for the title animation so they
+// are not re-allocated on every frame render.
+type animCache struct {
+	dim    lipgloss.Style
+	glow   [6]lipgloss.Style // gradient from spark → dim
+	bg     lipgloss.Style
+	flash  lipgloss.Style
+	normal [9]lipgloss.Style // one per art line, pre-colored
+}
+
+func buildAnimCache(s styles) animCache {
+	panelBg := s.panelBg
+
+	// Color palette for the art — gradient from accent to purple.
+	artColors := []lipgloss.Color{
+		"#7aa2f7", // accent blue
+		"#7aa2f7",
+		"#7dcfff", // cyan
+		"#7dcfff",
+		"#24283b", // blank line separator — invisible
+		"#bb9af7", // purple
+		"#bb9af7",
+		"#9d7cd8", // deeper purple
+		"#9d7cd8",
+	}
+
+	var normal [9]lipgloss.Style
+	for i, c := range artColors {
+		normal[i] = lipgloss.NewStyle().Foreground(c).Bold(true).Background(panelBg)
+	}
+
+	// 6-level glow gradient from bright spark (#bb9af7) → dim (#3b4261).
+	// Intermediate hex values interpolated between the two endpoints.
+	glowColors := [6]lipgloss.Color{
+		"#bb9af7", // level 0 — spark center
+		"#9d8ad4", // level 1
+		"#7f7ab1", // level 2
+		"#636a8e", // level 3
+		"#4f5c78", // level 4
+		"#3b4261", // level 5 — nearly dim
+	}
+	var glow [6]lipgloss.Style
+	for i, c := range glowColors {
+		glow[i] = lipgloss.NewStyle().Foreground(c).Background(panelBg)
+		if i == 0 {
+			glow[i] = glow[i].Bold(true)
+		}
+	}
+
+	return animCache{
+		dim:    lipgloss.NewStyle().Foreground(s.soft).Background(panelBg),
+		glow:   glow,
+		bg:     lipgloss.NewStyle().Background(panelBg),
+		flash:  lipgloss.NewStyle().Foreground(lipgloss.Color("#c0caf5")).Bold(true).Background(panelBg),
+		normal: normal,
+	}
+}
+
 // renderAnimatedBorder returns a single styled border line with a traveling spark.
 // width is the total character width. frame drives the spark position.
-func renderAnimatedBorder(width int, frame int, s styles) string {
+func renderAnimatedBorder(width int, frame int, cache animCache) string {
 	if width < 2 {
 		return ""
 	}
-
-	panelBg := panelBackground(s)
-
-	dimStyle := lipgloss.NewStyle().Foreground(s.soft).Background(panelBg)
-	sparkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#bb9af7")).Bold(true).Background(panelBg)
-	brightStyle := lipgloss.NewStyle().Foreground(s.accent).Background(panelBg)
 
 	innerWidth := width - 2 // corners take 2 chars
 	if innerWidth < 0 {
@@ -89,13 +141,10 @@ func renderAnimatedBorder(width int, frame int, s styles) string {
 			dist = -dist
 		}
 
-		switch {
-		case dist == 0:
-			b.WriteString(sparkStyle.Render(ch))
-		case dist <= 2:
-			b.WriteString(brightStyle.Render(ch))
-		default:
-			b.WriteString(dimStyle.Render(ch))
+		if dist < len(cache.glow) {
+			b.WriteString(cache.glow[dist].Render(ch))
+		} else {
+			b.WriteString(cache.dim.Render(ch))
 		}
 	}
 	return b.String()
@@ -104,8 +153,6 @@ func renderAnimatedBorder(width int, frame int, s styles) string {
 // renderAnimatedTitle composes the full animated title block:
 // border line, ASCII art with typing reveal, border line.
 func (m model) renderAnimatedTitle(width int) string {
-	panelBg := panelBackground(m.styles)
-
 	art := asciiArt()
 	aw := artWidth()
 	frame := m.titleFrame
@@ -114,26 +161,12 @@ func (m model) renderAnimatedTitle(width int) string {
 		revealedCols = aw
 	}
 
-	// Color palette for the art — gradient from accent to purple
-	artColors := []lipgloss.Color{
-		"#7aa2f7", // accent blue
-		"#7aa2f7",
-		"#7dcfff", // cyan
-		"#7dcfff",
-		"#24283b", // blank line separator — invisible
-		"#bb9af7", // purple
-		"#bb9af7",
-		"#9d7cd8", // deeper purple
-		"#9d7cd8",
-	}
-
-	flashColor := lipgloss.Color("#c0caf5") // bright white for the reveal edge
-	bgStyle := lipgloss.NewStyle().Background(panelBg)
+	cache := m.animCache
 
 	var lines []string
 
 	// Top border
-	lines = append(lines, renderAnimatedBorder(width, frame, m.styles))
+	lines = append(lines, renderAnimatedBorder(width, frame, cache))
 
 	// Render each art line with typing reveal
 	for lineIdx, artLine := range art {
@@ -145,14 +178,8 @@ func (m model) renderAnimatedTitle(width int) string {
 			runes = append(runes, ' ')
 		}
 
-		// Determine color for this line
-		lineColor := lipgloss.Color("#7aa2f7")
-		if lineIdx < len(artColors) {
-			lineColor = artColors[lineIdx]
-		}
-
-		normalStyle := lipgloss.NewStyle().Foreground(lineColor).Bold(true).Background(panelBg)
-		flashStyle := lipgloss.NewStyle().Foreground(flashColor).Bold(true).Background(panelBg)
+		// Pre-computed style for this line
+		normalStyle := cache.normal[lineIdx]
 
 		var lineBuilder strings.Builder
 
@@ -162,21 +189,21 @@ func (m model) renderAnimatedTitle(width int) string {
 			leftPad = 0
 		}
 		if leftPad > 0 {
-			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", leftPad)))
+			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", leftPad)))
 		}
 
 		if artLine == "" {
 			// Blank separator line
-			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", aw)))
+			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", aw)))
 		} else {
 			for col := 0; col < artRuneLen; col++ {
 				ch := string(runes[col])
 				if col >= revealedCols {
 					// Not yet revealed — render as space
-					lineBuilder.WriteString(bgStyle.Render(" "))
+					lineBuilder.WriteString(cache.bg.Render(" "))
 				} else if col >= revealedCols-revealColumns && frame < revealTotalTicks() {
 					// Flash edge — just revealed this tick
-					lineBuilder.WriteString(flashStyle.Render(ch))
+					lineBuilder.WriteString(cache.flash.Render(ch))
 				} else {
 					lineBuilder.WriteString(normalStyle.Render(ch))
 				}
@@ -184,21 +211,21 @@ func (m model) renderAnimatedTitle(width int) string {
 			// Pad remaining after art chars
 			remaining := aw - artRuneLen
 			if remaining > 0 {
-				lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", remaining)))
+				lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", remaining)))
 			}
 		}
 
 		// Right padding
 		rightPad := width - leftPad - aw
 		if rightPad > 0 {
-			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", rightPad)))
+			lineBuilder.WriteString(cache.bg.Render(strings.Repeat(" ", rightPad)))
 		}
 
 		lines = append(lines, lineBuilder.String())
 	}
 
 	// Bottom border
-	lines = append(lines, renderAnimatedBorder(width, frame+width/2, m.styles))
+	lines = append(lines, renderAnimatedBorder(width, frame+width/2, cache))
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

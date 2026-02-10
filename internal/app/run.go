@@ -92,7 +92,7 @@ func buildRequest(opts flags.Options, cfg config.Config) (scaffold.Request, erro
 
 	if name == "" || opts.Language == "" || opts.Framework == "" {
 		wizard := ui.NewWizard(language, framework)
-		program := tea.NewProgram(wizard)
+		program := tea.NewProgram(wizard, tea.WithAltScreen())
 		finalModel, err := program.Run()
 		if err != nil {
 			return scaffold.Request{}, err
@@ -161,16 +161,11 @@ func printPlan(plan domain.Plan) {
 }
 
 func printSuccess(request scaffold.Request, plan domain.Plan, gitOk bool) {
-	accent := lipgloss.Color("#7aa2f7")
-	muted := lipgloss.Color("#6b7280")
-	text := lipgloss.Color("#c0caf5")
-	green := lipgloss.Color("#9ece6a")
-
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(green)
-	labelStyle := lipgloss.NewStyle().Foreground(muted)
-	valueStyle := lipgloss.NewStyle().Foreground(text)
-	cmdStyle := lipgloss.NewStyle().Foreground(accent)
-	hintStyle := lipgloss.NewStyle().Foreground(muted).Italic(true)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.Green)
+	labelStyle := lipgloss.NewStyle().Foreground(ui.Muted)
+	valueStyle := lipgloss.NewStyle().Foreground(ui.Text)
+	cmdStyle := lipgloss.NewStyle().Foreground(ui.Accent)
+	hintStyle := lipgloss.NewStyle().Foreground(ui.Muted).Italic(true)
 
 	lines := []string{
 		"",

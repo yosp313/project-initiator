@@ -1,8 +1,10 @@
 package ui
 
 import (
-	"sort"
+	"slices"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/list"
 )
 
 func TestFrameworkDescription(t *testing.T) {
@@ -227,7 +229,7 @@ func TestSelectedLibraries_Sorted(t *testing.T) {
 		"air":   true,
 	}
 	got := selectedLibraries(selected)
-	if !sort.StringsAreSorted(got) {
+	if !slices.IsSorted(got) {
 		t.Errorf("selectedLibraries result is not sorted: %v", got)
 	}
 }
@@ -280,25 +282,112 @@ func TestStageSubtitle(t *testing.T) {
 	}
 }
 
-func TestBackHint(t *testing.T) {
+func TestStageProgress(t *testing.T) {
 	tests := []struct {
-		name  string
-		stage stage
-		want  string
+		name    string
+		stage   stage
+		hasLibs bool
+		want    float64
 	}{
-		{"language has no hint", stageLanguage, ""},
-		{"name has no hint", stageName, ""},
-		{"framework has hint", stageFramework, "  •  B to go back"},
-		{"libraries has hint", stageLibraries, "  •  B to go back"},
-		{"confirm has hint", stageConfirm, "  •  B to go back"},
-		{"done has hint", stageDone, "  •  B to go back"},
+		{"language", stageLanguage, false, 0.0},
+		{"framework no libs", stageFramework, false, 1.0 / 3.0},
+		{"framework with libs", stageFramework, true, 1.0 / 4.0},
+		{"libraries", stageLibraries, true, 2.0 / 4.0},
+		{"name no libs", stageName, false, 2.0 / 3.0},
+		{"name with libs", stageName, true, 3.0 / 4.0},
+		{"confirm", stageConfirm, false, 1.0},
+		{"done", stageDone, false, 0.0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := backHint(tt.stage)
+			m := model{stage: tt.stage}
+			if tt.hasLibs {
+				m.libraries = newCleanList([]list.Item{listItem{label: "test", description: "d"}}, listDelegate{}, 0, 0)
+			} else {
+				m.libraries = newCleanList([]list.Item{}, listDelegate{}, 0, 0)
+			}
+			got := m.stageProgress()
 			if got != tt.want {
-				t.Errorf("backHint(%d) = %q, want %q", tt.stage, got, tt.want)
+				t.Errorf("stageProgress() = %f, want %f", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTriggerTransition(t *testing.T) {
+	tests := []struct {
+		name    string
+		panelW  int
+		forward bool
+		wantPos bool // true = positive offset, false = negative
+	}{
+		{"forward default", 0, true, true},
+		{"backward default", 0, false, false},
+		{"forward with panel", 100, true, true},
+		{"backward with panel", 100, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model{panelW: tt.panelW}
+			m.triggerTransition(tt.forward)
+			if !m.transActive {
+				t.Error("transActive should be true after triggerTransition")
+			}
+			if m.transVel != 0 {
+				t.Errorf("transVel should be 0, got %f", m.transVel)
+			}
+			if tt.wantPos && m.transOffset <= 0 {
+				t.Errorf("expected positive offset, got %f", m.transOffset)
+			}
+			if !tt.wantPos && m.transOffset >= 0 {
+				t.Errorf("expected negative offset, got %f", m.transOffset)
+			}
+		})
+	}
+}
+
+func TestAbsF(t *testing.T) {
+	tests := []struct {
+		name  string
+		input float64
+		want  float64
+	}{
+		{"positive", 3.5, 3.5},
+		{"negative", -3.5, 3.5},
+		{"zero", 0.0, 0.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := absF(tt.input)
+			if got != tt.want {
+				t.Errorf("absF(%f) = %f, want %f", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyHorizontalOffset(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		offset   int
+		maxWidth int
+		want     string
+	}{
+		{"zero offset", "hello", 0, 10, "hello"},
+		{"shift right", "hello", 3, 10, "   hello"},
+		{"shift left", "hello", -2, 10, "llo       "},
+		{"shift left beyond length", "hi", -5, 10, "          "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyHorizontalOffset(tt.text, tt.offset, tt.maxWidth)
+			if got != tt.want {
+				t.Errorf("applyHorizontalOffset(%q, %d, %d) = %q, want %q", tt.text, tt.offset, tt.maxWidth, got, tt.want)
 			}
 		})
 	}
@@ -405,21 +494,21 @@ func TestRevealTotalTicks(t *testing.T) {
 }
 
 func TestRenderAnimatedBorder_EmptyForSmallWidth(t *testing.T) {
-	s := defaultStyles()
-	result := renderAnimatedBorder(1, 0, s)
+	cache := buildAnimCache(defaultStyles())
+	result := renderAnimatedBorder(1, 0, cache)
 	if result != "" {
 		t.Errorf("renderAnimatedBorder(1, 0) should be empty, got %q", result)
 	}
-	result = renderAnimatedBorder(0, 0, s)
+	result = renderAnimatedBorder(0, 0, cache)
 	if result != "" {
 		t.Errorf("renderAnimatedBorder(0, 0) should be empty, got %q", result)
 	}
 }
 
 func TestRenderAnimatedBorder_NonEmptyForValidWidth(t *testing.T) {
-	s := defaultStyles()
+	cache := buildAnimCache(defaultStyles())
 	for _, width := range []int{2, 10, 46, 80} {
-		result := renderAnimatedBorder(width, 0, s)
+		result := renderAnimatedBorder(width, 0, cache)
 		if result == "" {
 			t.Errorf("renderAnimatedBorder(%d, 0) should not be empty", width)
 		}
@@ -427,13 +516,13 @@ func TestRenderAnimatedBorder_NonEmptyForValidWidth(t *testing.T) {
 }
 
 func TestRenderAnimatedBorder_VariousFramesDoNotPanic(t *testing.T) {
-	s := defaultStyles()
+	cache := buildAnimCache(defaultStyles())
 	width := 40
 	// Ensure the function handles a full cycle of spark positions without panicking
 	// and always returns a non-empty string.
 	cycle := width + 5
 	for frame := 0; frame < cycle; frame++ {
-		result := renderAnimatedBorder(width, frame, s)
+		result := renderAnimatedBorder(width, frame, cache)
 		if result == "" {
 			t.Errorf("renderAnimatedBorder(%d, %d) should not be empty", width, frame)
 		}
@@ -441,8 +530,10 @@ func TestRenderAnimatedBorder_VariousFramesDoNotPanic(t *testing.T) {
 }
 
 func TestRenderAnimatedTitle_NonEmpty(t *testing.T) {
+	s := defaultStyles()
 	m := model{
-		styles:     defaultStyles(),
+		styles:     s,
+		animCache:  buildAnimCache(s),
 		titleFrame: 0,
 	}
 	result := m.renderAnimatedTitle(60)
@@ -452,8 +543,10 @@ func TestRenderAnimatedTitle_NonEmpty(t *testing.T) {
 }
 
 func TestRenderAnimatedTitle_ContainsBorderChars(t *testing.T) {
+	s := defaultStyles()
 	m := model{
-		styles:     defaultStyles(),
+		styles:     s,
+		animCache:  buildAnimCache(s),
 		titleFrame: 20, // fully revealed
 	}
 	result := m.renderAnimatedTitle(60)
@@ -463,8 +556,10 @@ func TestRenderAnimatedTitle_ContainsBorderChars(t *testing.T) {
 }
 
 func TestRenderAnimatedTitle_FullRevealContainsArtChars(t *testing.T) {
+	s := defaultStyles()
 	m := model{
-		styles:     defaultStyles(),
+		styles:     s,
+		animCache:  buildAnimCache(s),
 		titleFrame: 100, // well past full reveal
 	}
 	result := m.renderAnimatedTitle(60)
