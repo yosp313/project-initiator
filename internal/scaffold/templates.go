@@ -6,12 +6,11 @@ type Template struct {
 }
 
 type Option struct {
-	Language   string
-	Framework  string
-	Templates  []Template
-	PrimaryDir string
-	Generator  string
-	Libraries  []LibraryOption
+	Language  string
+	Framework string
+	Templates []Template
+	Generator string
+	Libraries []LibraryOption
 }
 
 type LibraryOption struct {
@@ -20,9 +19,8 @@ type LibraryOption struct {
 
 var Options = []Option{
 	{
-		Language:   "JavaScript",
-		Framework:  "Vanilla",
-		PrimaryDir: "src",
+		Language:  "JavaScript",
+		Framework: "Vanilla",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -39,9 +37,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Go",
-		Framework:  "Vanilla",
-		PrimaryDir: ".",
+		Language:  "Go",
+		Framework: "Vanilla",
 		Libraries: []LibraryOption{
 			{Name: "Gin"},
 			{Name: "Gorm"},
@@ -54,7 +51,7 @@ var Options = []Option{
 			},
 			{
 				RelativePath: "go.mod",
-				Content:      "module {{.Module}}\n\ngo 1.22\n",
+				Content:      "module {{.Module}}\n\ngo {{.GoVersion}}\n",
 			},
 			{
 				RelativePath: "README.md",
@@ -67,9 +64,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Go",
-		Framework:  "Cobra",
-		PrimaryDir: "cmd",
+		Language:  "Go",
+		Framework: "Cobra",
 		Libraries: []LibraryOption{
 			{Name: "Gin"},
 			{Name: "Gorm"},
@@ -78,10 +74,10 @@ var Options = []Option{
 		Templates: []Template{
 			{
 				RelativePath: "go.mod",
-				Content:      "module {{.Module}}\n\ngo 1.22\n",
+				Content:      "module {{.Module}}\n\ngo {{.GoVersion}}\n",
 			},
 			{
-				RelativePath: "cmd/{{.Name}}/main.go",
+				RelativePath: "cmd/{{.PackageName}}/main.go",
 				Content:      "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\n\t\"github.com/spf13/cobra\"\n\t\"{{.Module}}/internal/app\"\n)\n\nfunc main() {\n\trootCmd := &cobra.Command{\n\t\tUse: \"{{.Name}}\",\n\t\tShort: \"{{.Name}} CLI\",\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\n\t\t\treturn app.Run()\n\t\t},\n\t}\n\n\tif err := rootCmd.Execute(); err != nil {\n\t\t_, _ = fmt.Fprintln(os.Stderr, \"error:\", err)\n\t\tos.Exit(1)\n\t}\n}\n",
 			},
 			{
@@ -95,9 +91,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Node.js",
-		Framework:  "Express",
-		PrimaryDir: "src",
+		Language:  "Node.js",
+		Framework: "Express",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -114,9 +109,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Node.js",
-		Framework:  "Hono",
-		PrimaryDir: "src",
+		Language:  "Node.js",
+		Framework: "Hono",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -133,9 +127,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Node.js",
-		Framework:  "NestJS",
-		PrimaryDir: "src",
+		Language:  "Node.js",
+		Framework: "NestJS",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -160,9 +153,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Bun",
-		Framework:  "Vanilla",
-		PrimaryDir: "src",
+		Language:  "Bun",
+		Framework: "Vanilla",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -179,9 +171,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Bun",
-		Framework:  "Bun",
-		PrimaryDir: "src",
+		Language:  "Bun",
+		Framework: "Bun",
 		Templates: []Template{
 			{
 				RelativePath: "package.json",
@@ -198,9 +189,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Python",
-		Framework:  "Vanilla",
-		PrimaryDir: "app",
+		Language:  "Python",
+		Framework: "Vanilla",
 		Templates: []Template{
 			{
 				RelativePath: "app/main.py",
@@ -213,9 +203,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "Python",
-		Framework:  "FastAPI",
-		PrimaryDir: "app",
+		Language:  "Python",
+		Framework: "FastAPI",
 		Templates: []Template{
 			{
 				RelativePath: "requirements.txt",
@@ -232,9 +221,8 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "PHP",
-		Framework:  "Vanilla",
-		PrimaryDir: "src",
+		Language:  "PHP",
+		Framework: "Vanilla",
 		Templates: []Template{
 			{
 				RelativePath: "src/index.php",
@@ -247,10 +235,9 @@ var Options = []Option{
 		},
 	},
 	{
-		Language:   "PHP",
-		Framework:  "Laravel",
-		PrimaryDir: ".",
-		Generator:  "composer-laravel",
-		Templates:  nil,
+		Language:  "PHP",
+		Framework: "Laravel",
+		Generator: "composer-laravel",
+		Templates: nil,
 	},
 }

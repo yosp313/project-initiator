@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"text/template"
 )
@@ -18,6 +19,7 @@ type Data struct {
 	PackageName string
 	Module      string
 	Framework   string
+	GoVersion   string
 	UseGin      bool
 	UseGorm     bool
 	UseSqlc     bool
@@ -64,6 +66,7 @@ func Plan(req Request) (PlanResult, error) {
 		PackageName: projectSlug,
 		Module:      projectSlug,
 		Framework:   opt.Framework,
+		GoVersion:   goVersionTag(),
 		UseGin:      selected["gin"],
 		UseGorm:     selected["gorm"],
 		UseSqlc:     selected["sqlc"],
@@ -83,7 +86,11 @@ func Plan(req Request) (PlanResult, error) {
 		if err != nil {
 			return PlanResult{}, err
 		}
-		path := filepath.Join(projectDir, filepath.FromSlash(tmpl.RelativePath))
+		relPath, err := render(tmpl.RelativePath, data)
+		if err != nil {
+			return PlanResult{}, err
+		}
+		path := filepath.Join(projectDir, filepath.FromSlash(relPath))
 		actions = append(actions, Action{Path: path, Content: content})
 	}
 
@@ -93,13 +100,31 @@ func Plan(req Request) (PlanResult, error) {
 			if strings.EqualFold(opt.Framework, "cobra") {
 				mainPath = filepath.Join(projectDir, "cmd", projectSlug, "main.go")
 			}
+			// Remove base template files that will be replaced by library-specific versions
+			replace := map[string]bool{
+				mainPath:                               true,
+				filepath.Join(projectDir, "go.mod"):    true,
+				filepath.Join(projectDir, "README.md"): true,
+			}
+			filtered := make([]Action, 0, len(actions))
+			for _, a := range actions {
+				if !replace[a.Path] {
+					filtered = append(filtered, a)
+				}
+			}
+			actions = filtered
+
 			actions = append(actions, Action{Path: mainPath, Content: goLibrariesMain(data, opt.Framework)})
 			actions = append(actions, Action{Path: filepath.Join(projectDir, "go.mod"), Content: goLibrariesMod(data)})
 			actions = append(actions, Action{Path: filepath.Join(projectDir, "README.md"), Content: goLibrariesReadme(data)})
 		}
 		if data.UseGin {
+			routesContent, err := render(goGinRoutes, data)
+			if err != nil {
+				return PlanResult{}, err
+			}
 			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/http/server.go"), Content: goGinServer})
-			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/http/routes.go"), Content: goGinRoutes})
+			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/http/routes.go"), Content: routesContent})
 		}
 		if data.UseGorm {
 			actions = append(actions, Action{Path: filepath.Join(projectDir, "internal/db/db.go"), Content: goGormDB})
@@ -245,7 +270,7 @@ func goLibrariesReadme(data Data) string {
 }
 
 func goLibrariesMod(data Data) string {
-	lines := []string{"module " + data.Module, "", "go 1.22", "", "require ("}
+	lines := []string{"module " + data.Module, "", "go " + data.GoVersion, "", "require ("}
 	if data.UseGin {
 		lines = append(lines, "\tgithub.com/gin-gonic/gin v1.10.0")
 	}
@@ -301,4 +326,16 @@ func goLibrariesMain(data Data, framework string) string {
 	code = append(code, ")", "", strings.Join(body, "\n"), "", strings.Join(mainBody, "\n"), "")
 
 	return strings.Join(code, "\n")
+}
+
+// goVersionTag returns the Go version suitable for a go.mod directive (e.g. "1.23").
+// It parses runtime.Version() which returns strings like "go1.23.4" or "devel ...".
+func goVersionTag() string {
+	v := runtime.Version() // e.g. "go1.23.4"
+	v = strings.TrimPrefix(v, "go")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) >= 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return "1.22" // fallback
 }

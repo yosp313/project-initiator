@@ -37,6 +37,7 @@ const (
 	stageFramework
 	stageLibraries
 	stageName
+	stageConfirm
 	stageDone
 )
 
@@ -57,6 +58,7 @@ type model struct {
 	panelH       int
 	styles       styles
 	spinner      spinner.Model
+	titleFrame   int
 }
 
 type styles struct {
@@ -180,8 +182,15 @@ func NewWizard(defaultLanguage string, defaultFramework string) tea.Model {
 		defaultFramework = "Vanilla"
 	}
 
-	langItems := make([]list.Item, 0, len(options))
-	for lang, frameworks := range options {
+	langNames := make([]string, 0, len(options))
+	for lang := range options {
+		langNames = append(langNames, lang)
+	}
+	sortStrings(langNames)
+
+	langItems := make([]list.Item, 0, len(langNames))
+	for _, lang := range langNames {
+		frameworks := options[lang]
 		noun := "templates"
 		if len(frameworks) == 1 {
 			noun = "template"
@@ -276,7 +285,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.panelW = clamp(int(float64(m.width)*0.80), 64, m.width-4)
-		m.panelH = clamp(int(float64(m.height)*0.70), 18, m.height-4)
+		m.panelH = clamp(int(float64(m.height)*0.80), 28, m.height-4)
 		listWidth := clamp(m.panelW-8, 56, 100)
 		listHeight := m.listHeightFixed()
 		m.languages.SetSize(listWidth, listHeight)
@@ -287,6 +296,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var spinCmd tea.Cmd
 	m.spinner, spinCmd = m.spinner.Update(msg)
+	if _, ok := msg.(spinner.TickMsg); ok {
+		m.titleFrame++
+	}
 
 	switch m.stage {
 	case stageLanguage:
@@ -300,6 +312,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return modelValue, tea.Batch(cmd, spinCmd)
 	case stageName:
 		modelValue, cmd := m.updateName(msg)
+		return modelValue, tea.Batch(cmd, spinCmd)
+	case stageConfirm:
+		modelValue, cmd := m.updateConfirm(msg)
 		return modelValue, tea.Batch(cmd, spinCmd)
 	case stageDone:
 		return m, tea.Quit
@@ -315,13 +330,15 @@ func (m model) View() string {
 
 	switch m.stage {
 	case stageLanguage:
-		return m.renderFrame(m.languages.View(), "Step 1/3")
+		return m.renderFrame(m.languages.View(), m.stepLabel())
 	case stageFramework:
-		return m.renderFrame(m.framework.View(), "Step 2/4")
+		return m.renderFrame(m.framework.View(), m.stepLabel())
 	case stageLibraries:
-		return m.renderFrame(m.libraries.View(), "Step 3/4")
+		return m.renderFrame(m.libraries.View(), m.stepLabel())
 	case stageName:
-		return m.renderFrame(m.renderNameInput(), "Step 4/4")
+		return m.renderFrame(m.renderNameInput(), m.stepLabel())
+	case stageConfirm:
+		return m.renderFrame(m.renderConfirmation(), m.stepLabel())
 	case stageDone:
 		return "done\n"
 	default:
@@ -416,12 +433,21 @@ func (m model) updateName(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.result.Name = value
 			m.result.Libraries = selectedLibraries(m.selectedLibs)
-			m.stage = stageDone
-			return m, tea.Quit
+			m.stage = stageConfirm
 		}
 	}
 
 	return m, cmd
+}
+
+func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg.String() == "enter" {
+			m.stage = stageDone
+			return m, tea.Quit
+		}
+	}
+	return m, nil
 }
 
 func buildFrameworkList(language string, options map[string][]string, defaultFramework string, styles styles) list.Model {
@@ -519,6 +545,8 @@ func frameworkDescription(language string, framework string) string {
 		return "SQL code generation"
 	case "express":
 		return "Node.js web server"
+	case "hono":
+		return "lightweight web framework"
 	case "nestjs":
 		return "typed Node framework"
 	case "bun":
@@ -548,18 +576,16 @@ func (m model) renderFrame(content string, step string) string {
 		m.width = 96
 	}
 	if m.height == 0 {
-		m.height = 28
+		m.height = 36
 	}
 	if m.panelW == 0 {
 		m.panelW = 88
 	}
 	if m.panelH == 0 {
-		m.panelH = 26
+		m.panelH = 32
 	}
 	contentWidth := m.panelW - 6
-	title := m.spinner.View() + " ▸ Scaffold Wizard ◂ " + m.spinner.View()
-	header := m.styles.header.Copy().Width(contentWidth).Align(lipgloss.Center).Render(title)
-	meta := m.styles.subheader.Copy().Width(contentWidth).Align(lipgloss.Center).Render("Choose a template and name")
+	titleBlock := m.renderAnimatedTitle(contentWidth)
 	status := m.styles.status.Render(step + "  •  Enter to continue" + backHint(m.stage) + "  •  Esc to cancel")
 	stageTitleLine := m.styles.listTitle.Render(stageTitle(m.stage))
 	stageSubtitleLine := m.styles.subheader.Render(stageSubtitle(m.stage))
@@ -572,8 +598,7 @@ func (m model) renderFrame(content string, step string) string {
 	rowStyle := lipgloss.NewStyle().Width(contentWidth).Background(rowBg)
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
-		rowStyle.Render(header),
-		rowStyle.Render(meta),
+		rowStyle.Render(titleBlock),
 		rowStyle.Render(stageTitleLine),
 		rowStyle.Render(stageSubtitleLine),
 		rowStyle.Render(contentBlock),
@@ -609,6 +634,53 @@ func (m model) renderNameInput() string {
 	return lipgloss.JoinVertical(lipgloss.Left, label, blankLine, box, blankLine, help)
 }
 
+func (m model) renderConfirmation() string {
+	rowBg, ok := m.styles.panel.GetBackground().(lipgloss.Color)
+	if !ok {
+		rowBg = lipgloss.Color("#24283b")
+	}
+	blankLine := lipgloss.NewStyle().Background(rowBg).Render(" ")
+
+	labelStyle := m.styles.inputLabel
+	valueStyle := m.styles.listSelected
+
+	lines := []string{
+		labelStyle.Render("Language    ") + valueStyle.Render(m.result.Language),
+		labelStyle.Render("Framework   ") + valueStyle.Render(m.result.Framework),
+	}
+
+	if len(m.result.Libraries) > 0 {
+		lines = append(lines, labelStyle.Render("Libraries   ")+valueStyle.Render(strings.Join(m.result.Libraries, ", ")))
+	}
+
+	lines = append(lines, labelStyle.Render("Name        ")+valueStyle.Render(m.result.Name))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	hint := m.styles.help.Render("Press Enter to create project")
+	return lipgloss.JoinVertical(lipgloss.Left, content, blankLine, hint)
+}
+
+func (m model) stepLabel() string {
+	hasLibs := len(m.libraries.Items()) > 0
+	switch m.stage {
+	case stageLanguage:
+		return "Step 1"
+	case stageFramework:
+		return "Step 2"
+	case stageLibraries:
+		return "Step 3/4"
+	case stageName:
+		if hasLibs {
+			return "Step 4/4"
+		}
+		return "Step 3/3"
+	case stageConfirm:
+		return "Review"
+	default:
+		return ""
+	}
+}
+
 func stageTitle(s stage) string {
 	switch s {
 	case stageLanguage:
@@ -619,6 +691,8 @@ func stageTitle(s stage) string {
 		return "Choose libraries"
 	case stageName:
 		return "Name your project"
+	case stageConfirm:
+		return "Confirm your selections"
 	default:
 		return ""
 	}
@@ -634,6 +708,8 @@ func stageSubtitle(s stage) string {
 		return "Select optional packages (space to toggle)"
 	case stageName:
 		return "This will create the folder name"
+	case stageConfirm:
+		return "Review before creating the project"
 	default:
 		return ""
 	}
@@ -644,13 +720,6 @@ func backHint(s stage) string {
 		return ""
 	}
 	return "  •  B to go back"
-}
-
-func backChip(s stage, styles styles) string {
-	if s == stageName || s == stageLanguage {
-		return ""
-	}
-	return " " + styles.chipGhost.Render("B Back")
 }
 
 func selectedLibraries(selected map[string]bool) []string {
@@ -665,7 +734,7 @@ func selectedLibraries(selected map[string]bool) []string {
 }
 
 func (m model) listHeightFixed() int {
-	reservedRows := 5
+	reservedRows := 14
 	return clamp(m.panelH-reservedRows, 6, 30)
 }
 
@@ -679,12 +748,226 @@ func contains(values []string, target string) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// ASCII art title with typing reveal and animated border
+// ---------------------------------------------------------------------------
+
+// asciiArt returns the raw lines for "SCAFFOLD" and "WIZARD" in block letters.
+// Each word is 4 lines tall. The two words are separated by a blank line.
+// All lines within a word have equal width (padded with spaces).
+func asciiArt() []string {
+	return []string{
+		"▄███▄ ▄███▄  ▄█▄  █▀▀▀▀ █▀▀▀▀ ▄███▄ █     ▄██▄",
+		"▀▄    █     █▀ ▀█ █▀▀   █▀▀   █   █ █     █  █",
+		" ▀██▄ █     █▀▀▀█ █     █     █   █ █     █  █",
+		"▀███▀ ▀███▀ ▀   ▀ ▀     ▀     ▀███▀ ▀▀▀▀▀ ▀██▀",
+		"",
+		"        █   █ ▀█▀ ▀▀▀█  ▄█▄  █▀▀▄ ▄██▄        ",
+		"        █ █ █  █    █▀ █▀ ▀█ █▀▀▄ █  █        ",
+		"        █▄█▄█  █   █▀  █▀▀▀█ █  █ █  █        ",
+		"        ▀   ▀ ▀▀▀ █▀▀▀ ▀   ▀ ▀  ▀ ▀██▀        ",
+	}
+}
+
+// artWidth returns the rune-width of the widest line in the ASCII art.
+func artWidth() int {
+	w := 0
+	for _, line := range asciiArt() {
+		n := runeLen(line)
+		if n > w {
+			w = n
+		}
+	}
+	return w
+}
+
+func runeLen(s string) int {
+	return len([]rune(s))
+}
+
+// revealColumns is the number of columns revealed per animation tick.
+const revealColumns = 3
+
+// revealTotalTicks returns how many ticks to fully reveal the art.
+func revealTotalTicks() int {
+	w := artWidth()
+	ticks := w / revealColumns
+	if w%revealColumns != 0 {
+		ticks++
+	}
+	return ticks
+}
+
+// borderChars used for the animated border line.
+var borderSegments = []rune{'═', '═', '═', '═', '═', '═', '═', '═'}
+
+// renderAnimatedBorder returns a single styled border line with a traveling spark.
+// width is the total character width. frame drives the spark position.
+func renderAnimatedBorder(width int, frame int, s styles) string {
+	if width < 2 {
+		return ""
+	}
+
+	panelBg, ok := s.panel.GetBackground().(lipgloss.Color)
+	if !ok {
+		panelBg = lipgloss.Color("#24283b")
+	}
+
+	dimStyle := lipgloss.NewStyle().Foreground(s.soft).Background(panelBg)
+	sparkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#bb9af7")).Bold(true).Background(panelBg)
+	brightStyle := lipgloss.NewStyle().Foreground(s.accent).Background(panelBg)
+
+	innerWidth := width - 2 // corners take 2 chars
+	if innerWidth < 0 {
+		innerWidth = 0
+	}
+	sparkPos := frame % (innerWidth + 2) // position along the entire width
+
+	var b strings.Builder
+	for i := 0; i < width; i++ {
+		ch := "═"
+		if i == 0 {
+			ch = "╾"
+		} else if i == width-1 {
+			ch = "╼"
+		}
+
+		dist := sparkPos - i
+		if dist < 0 {
+			dist = -dist
+		}
+
+		switch {
+		case dist == 0:
+			b.WriteString(sparkStyle.Render(ch))
+		case dist <= 2:
+			b.WriteString(brightStyle.Render(ch))
+		default:
+			b.WriteString(dimStyle.Render(ch))
+		}
+	}
+	return b.String()
+}
+
+// renderAnimatedTitle composes the full animated title block:
+// border line, ASCII art with typing reveal, border line.
+func (m model) renderAnimatedTitle(width int) string {
+	panelBg, ok := m.styles.panel.GetBackground().(lipgloss.Color)
+	if !ok {
+		panelBg = lipgloss.Color("#24283b")
+	}
+
+	art := asciiArt()
+	aw := artWidth()
+	frame := m.titleFrame
+	revealedCols := frame * revealColumns
+	if revealedCols > aw {
+		revealedCols = aw
+	}
+
+	// Color palette for the art — gradient from accent to purple
+	artColors := []lipgloss.Color{
+		"#7aa2f7", // accent blue
+		"#7aa2f7",
+		"#7dcfff", // cyan
+		"#7dcfff",
+		"#24283b", // blank line separator — invisible
+		"#bb9af7", // purple
+		"#bb9af7",
+		"#9d7cd8", // deeper purple
+		"#9d7cd8",
+	}
+
+	flashColor := lipgloss.Color("#c0caf5") // bright white for the reveal edge
+	bgStyle := lipgloss.NewStyle().Background(panelBg)
+
+	var lines []string
+
+	// Top border
+	lines = append(lines, renderAnimatedBorder(width, frame, m.styles))
+
+	// Render each art line with typing reveal
+	for lineIdx, artLine := range art {
+		runes := []rune(artLine)
+		artRuneLen := len(runes)
+
+		// Pad to artWidth
+		for len(runes) < aw {
+			runes = append(runes, ' ')
+		}
+
+		// Determine color for this line
+		lineColor := lipgloss.Color("#7aa2f7")
+		if lineIdx < len(artColors) {
+			lineColor = artColors[lineIdx]
+		}
+
+		normalStyle := lipgloss.NewStyle().Foreground(lineColor).Bold(true).Background(panelBg)
+		flashStyle := lipgloss.NewStyle().Foreground(flashColor).Bold(true).Background(panelBg)
+
+		var lineBuilder strings.Builder
+
+		// Center padding
+		leftPad := (width - aw) / 2
+		if leftPad < 0 {
+			leftPad = 0
+		}
+		if leftPad > 0 {
+			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", leftPad)))
+		}
+
+		if artLine == "" {
+			// Blank separator line
+			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", aw)))
+		} else {
+			for col := 0; col < artRuneLen; col++ {
+				ch := string(runes[col])
+				if col >= revealedCols {
+					// Not yet revealed — render as space
+					lineBuilder.WriteString(bgStyle.Render(" "))
+				} else if col >= revealedCols-revealColumns && frame < revealTotalTicks() {
+					// Flash edge — just revealed this tick
+					lineBuilder.WriteString(flashStyle.Render(ch))
+				} else {
+					lineBuilder.WriteString(normalStyle.Render(ch))
+				}
+			}
+			// Pad remaining after art chars
+			remaining := aw - artRuneLen
+			if remaining > 0 {
+				lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", remaining)))
+			}
+		}
+
+		// Right padding
+		rightPad := width - leftPad - aw
+		if rightPad > 0 {
+			lineBuilder.WriteString(bgStyle.Render(strings.Repeat(" ", rightPad)))
+		}
+
+		lines = append(lines, lineBuilder.String())
+	}
+
+	// Bottom border
+	lines = append(lines, renderAnimatedBorder(width, frame+width/2, m.styles))
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
 func (m model) back() model {
 	switch m.stage {
 	case stageFramework:
 		m.stage = stageLanguage
-	case stageName:
+	case stageLibraries:
 		m.stage = stageFramework
+	case stageName:
+		if len(m.libraries.Items()) > 0 {
+			m.stage = stageLibraries
+		} else {
+			m.stage = stageFramework
+		}
+	case stageConfirm:
+		m.stage = stageName
 	}
 
 	return m

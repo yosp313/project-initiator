@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"project-initiator/internal/config"
 	"project-initiator/internal/flags"
@@ -55,6 +56,8 @@ func Run(args []string) int {
 		return 1
 	}
 
+	gitOk := gitInit(plan.ProjectDir)
+
 	if err := config.Save(opts.ConfigPath, config.Config{
 		DefaultLanguage:  request.Language,
 		DefaultFramework: request.Framework,
@@ -63,7 +66,7 @@ func Run(args []string) int {
 		_, _ = fmt.Fprintln(os.Stderr, "config save error:", err)
 	}
 
-	_, _ = fmt.Fprintln(os.Stdout, "Created", plan.ProjectDir)
+	printSuccess(request, plan, gitOk)
 	return 0
 }
 
@@ -154,6 +157,79 @@ func printPlan(plan scaffold.PlanResult) {
 	for _, action := range plan.Actions {
 		_, _ = fmt.Fprintln(os.Stdout, "-", action.Path)
 	}
+}
+
+func printSuccess(request scaffold.Request, plan scaffold.PlanResult, gitOk bool) {
+	accent := lipgloss.Color("#7aa2f7")
+	muted := lipgloss.Color("#6b7280")
+	text := lipgloss.Color("#c0caf5")
+	green := lipgloss.Color("#9ece6a")
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(green)
+	labelStyle := lipgloss.NewStyle().Foreground(muted)
+	valueStyle := lipgloss.NewStyle().Foreground(text)
+	cmdStyle := lipgloss.NewStyle().Foreground(accent)
+	hintStyle := lipgloss.NewStyle().Foreground(muted).Italic(true)
+
+	lines := []string{
+		"",
+		titleStyle.Render("  Project created successfully!"),
+		"",
+		labelStyle.Render("  Path        ") + valueStyle.Render(plan.ProjectDir),
+		labelStyle.Render("  Language    ") + valueStyle.Render(request.Language),
+		labelStyle.Render("  Framework   ") + valueStyle.Render(request.Framework),
+	}
+
+	if len(request.Libraries) > 0 {
+		lines = append(lines, labelStyle.Render("  Libraries   ")+valueStyle.Render(strings.Join(request.Libraries, ", ")))
+	}
+
+	fileCount := len(plan.Actions)
+	noun := "files"
+	if fileCount == 1 {
+		noun = "file"
+	}
+	lines = append(lines, labelStyle.Render("  Files       ")+valueStyle.Render(fmt.Sprintf("%d %s created", fileCount, noun)))
+
+	if gitOk {
+		lines = append(lines, labelStyle.Render("  Git         ")+valueStyle.Render("initialized"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("  Next steps:"))
+	lines = append(lines, cmdStyle.Render("    cd "+plan.ProjectDir))
+
+	nextCmd := nextStepCommand(request.Language)
+	if nextCmd != "" {
+		lines = append(lines, cmdStyle.Render("    "+nextCmd))
+	}
+
+	lines = append(lines, "")
+
+	_, _ = fmt.Fprintln(os.Stdout, strings.Join(lines, "\n"))
+}
+
+func nextStepCommand(language string) string {
+	switch strings.ToLower(language) {
+	case "go":
+		return "go mod tidy"
+	case "node.js":
+		return "npm install"
+	case "bun":
+		return "bun install"
+	case "python":
+		return "pip install -r requirements.txt"
+	default:
+		return ""
+	}
+}
+
+func gitInit(projectDir string) bool {
+	cmd := exec.Command("git", "init")
+	cmd.Dir = projectDir
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run() == nil
 }
 
 func runGenerator(generator string, projectDir string) error {

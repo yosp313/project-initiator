@@ -81,7 +81,6 @@ func applyDefaults(cfg Config) Config {
 	if cfg.DefaultDir == "" {
 		cfg.DefaultDir = defaults.DefaultDir
 	}
-	cfg.DefaultDir = "/mnt/Dev/Projects"
 
 	return cfg
 }
